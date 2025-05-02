@@ -1,4 +1,3 @@
-
 # Define the network location and local temporary folder
 ## Edit to reflect source and destination of your software installation files.
 ## Comment out '$NetworkPath' if you intend to move files outside of this script.
@@ -326,7 +325,8 @@ function Uninstall-Program {
     }
 }
 
-
+$LogPath = "C:\kworking\onboarding-log_$env:COMPUTERNAME.txt"
+Start-Transcript -Path $LogPath -Append
 
 # Ensure the script is running with administrator privileges
 if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
@@ -338,18 +338,18 @@ if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdent
 
 # Check if machine is domain-joined
 if (-not (Test-ComputerSecureChannel)) {
-    Write-Error "❌ This computer is not joined to a domain. Exiting script."
+    Write-Error "This computer is not joined to a domain. Exiting script."
     exit 1
 }
 
 # Check if Active Directory module is available
 if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
-    Write-Host "🔍 Active Directory module not found. Installing RSAT: Active Directory..." -ForegroundColor Yellow
+    Write-Host "Active Directory module not found. Installing RSAT: Active Directory..." -ForegroundColor Yellow
     try {
         Add-WindowsCapability -Online -Name "Rsat.ActiveDirectory.DS-LDS.Tools~~~~0.0.1.0" -ErrorAction Stop
-        Write-Host "✅ RSAT Active Directory module installed successfully." -ForegroundColor Green
+        Write-Host "RSAT Active Directory module installed successfully." -ForegroundColor Green
     } catch {
-        Write-Error "❌ Failed to install RSAT Active Directory module. Error: $_"
+        Write-Error "Failed to install RSAT Active Directory module. Error: $_"
         exit 1
     }
 }
@@ -360,7 +360,12 @@ Import-Module ActiveDirectory
 $ComputerName = $env:COMPUTERNAME
 
 # Get the computer object from AD
-$Computer = Get-ADComputer -Identity $ComputerName
+try {
+    $Computer = Get-ADComputer -Identity $ComputerName -ErrorAction Stop
+} catch {
+    Write-Error "Failed to get AD computer object: $_"
+    exit 1
+}
 
 # Prompt user for a description
 $Description = Read-Host "Enter a new description for the computer object"
@@ -372,7 +377,11 @@ $Serial = Read-Host "Enter the device's serial number"
 $NewOU = "OU=Unassigned,OU=UPA-Workstations,DC=unitedpropertyassociates.com,DC=com"
 
 # Move the computer to the new OU
-Move-ADObject -Identity $Computer.DistinguishedName -TargetPath $NewOU
+Move-ADObject -Identity $Computer.DistinguishedName -TargetPath $NewOU -Confirm:$false
+if ($Computer -eq $null) {
+    Write-Error "Could not find computer object '$ComputerName' in AD. Exiting."
+    exit 1
+}
 
 # Update attributes
 Set-ADComputer -Identity $ComputerName `
@@ -512,5 +521,7 @@ foreach ($Program in $HPWolfList) {
     Uninstall-Program -ProgramName $Program
 }
 Write-Output "Uninstallation process completed."
+
+Stop-Transcript
 
 if ((Read-Host "Do you want to restart now? (Y/N)") -match "^(Y|y)$") { Restart-Computer -Force }
