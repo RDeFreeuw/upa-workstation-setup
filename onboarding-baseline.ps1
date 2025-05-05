@@ -288,44 +288,62 @@ if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
     }
 }
 
-Import-Module ActiveDirectory
-
-# Get local computer name
-$ComputerName = $env:COMPUTERNAME
-
-# Get the computer object from AD
+# Define domain search base and target OU
+$domainBase = "DC=upa,DC=com"
+$targetOU   = "OU=Workstations,DC=upa,DC=com"
+ 
+# Ensure AD module is available
+Import-Module ActiveDirectory -ErrorAction Stop
+ 
+# Get the computer object from anywhere in the domain
+$computer = Get-ADComputer -Filter "Name -eq '$env:COMPUTERNAME'" -SearchBase $domainBase -Properties Description, serialNumber, DistinguishedName, managedBy, physicalDeliveryOfficeName
+ 
+# Validate target OU
+if (-not (Get-ADOrganizationalUnit -Filter "DistinguishedName -eq '$targetOU'" -ErrorAction SilentlyContinue)) {
+    Write-Error "Target OU '$targetOU' does not exist. Aborting move operation."
+    return
+}
+ 
+# Validate the computer object
+if ($null -eq $computer -or [string]::IsNullOrWhiteSpace($computer.DistinguishedName)) {
+    Write-Error "Computer object '$env:COMPUTERNAME' not found in domain or missing DistinguishedName."
+    return
+}
+ 
+# Prompt for optional updates to 'Description' and 'serialNumber'
+$descriptionInput = Read-Host "Enter new description (ENTER to keep current: '$($computer.Description)')"
+$serialInput      = Read-Host "Enter new serial number (ENTER to keep current: '$($computer.serialNumber)')"
+ 
+# Build a hashtable for properties to update
+$updateProps = @{}
+ 
+if ($descriptionInput) { $updateProps["Description"] = $descriptionInput }
+if ($serialInput)      { $updateProps["serialNumber"] = $serialInput }
+ 
+# Always clear managedBy and physicalDeliveryOfficeName
+$updateProps["managedBy"] = $null
+$updateProps["physicalDeliveryOfficeName"] = $null
+ 
+# Perform AD object update
+if ($updateProps.Count -gt 0) {
+    try {
+        Set-ADComputer -Identity $computer.DistinguishedName @updateProps
+        Write-Host "Computer object updated successfully."
+    }
+    catch {
+        Write-Error "Failed to update computer object attributes: $_"
+    }
+}
+ 
+# Attempt to move the computer object to the correct OU
 try {
-    $Computer = Get-ADComputer -Identity $ComputerName -ErrorAction Stop
-} catch {
-    Write-Error "Failed to get AD computer object: $_"
-    exit 1
+    Move-ADObject -Identity $computer.DistinguishedName -TargetPath $targetOU -Confirm:$false
+    Write-Host "Successfully moved '$($computer.Name)' to OU: $targetOU"
 }
-
-# Prompt user for a description
-$Description = Read-Host "Enter a new description for the computer object"
-
-# Prompt user for a Serial Number
-$Serial = Read-Host "Enter the device's serial number"
-
-# Define the new OU Distinguished Name (modify this)
-$NewOU = "OU=Unassigned,OU=UPA-Workstations,DC=unitedpropertyassociates.com,DC=com"
-
-# Move the computer to the new OU
-Move-ADObject -Identity $Computer.DistinguishedName -TargetPath $NewOU -Confirm:$false
-if ($Computer -eq $null) {
-    Write-Error "Could not find computer object '$ComputerName' in AD. Exiting."
-    exit 1
+catch {
+    Write-Error "❗ Failed to move computer object: $_"
 }
-
-# Update attributes
-Set-ADComputer -Identity $ComputerName `
-    -Description $Description `
-	-serialNumber $Serial `
-    -ManagedBy $null `
-    -PhysicalDeliveryOfficeName $null
-
-Write-Host "Moved $ComputerName to $NewOU and updated attributes." -ForegroundColor Green
-
+ 
 ## Uninstall Cycle
 
 # **Step 1: Uninstall Existing Software**
