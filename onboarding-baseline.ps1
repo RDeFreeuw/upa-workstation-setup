@@ -12,8 +12,8 @@ $SoftwareList = @(
     @{Name = "Chrome"; Path = "chrome\ChromeSetup.exe"; Arguments = "/silent /install"}
     @{Name = "Wondershare"; Path = "wondershare\pdfelement8_en.exe"; Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-"}
     @{Name = "Adobe Reader"; Path = "adobe-reader\adobe-reader.exe"; Arguments = "/sAll /silent /install"}
-	@{Name = "VLC Media Player"; Path = "vlc\vlc.exe"; Arguments = "/L=1033 /S"}
-	@{Name = "7zip Archiver"; Path = "7zip\7zip.exe"; Arguments = "/S"}
+    @{Name = "VLC Media Player"; Path = "vlc\vlc.exe"; Arguments = "/L=1033 /S"}
+    @{Name = "7zip Archiver"; Path = "7zip\7zip.exe"; Arguments = "/S"}
     @{Name = "MS Office"; Path = "ms-office-deployment\ms-office-install.bat"; Arguments = ""}
 )
 
@@ -153,175 +153,109 @@ $HPWolfList = @(
 
 function Uninstall-Program {
     param (
-        [string]$ProgramName
+        [Parameter(Mandatory)]
+        [string[]]$UninstallList
     )
 
-    Write-Output "Searching for $ProgramName to uninstall..."
-    $Remaining = $true
-    $MaxAttempts = 3
-    $Attempts = 0
+    $registryPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
 
-    while ($Remaining -and $Attempts -lt $MaxAttempts) {
-        $Remaining = $false
-        $Attempts++
+    foreach ($program in $UninstallList) {
+        Write-Host "`n=== Processing: $program ==="
 
-        # 1️⃣ Uninstall via Registry (for EXE and MSI-based programs)
-        $RegistryPaths = @(
-            "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
-            "HKLM:\Software\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
-            "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
-        )
+        # Stop associated processes
+        Get-Process | Where-Object { $_.Name -like "*$program*" } | ForEach-Object {
+            try {
+                Stop-Process -Id $_.Id -Force -ErrorAction Stop
+                Write-Host "Stopped process: $($_.Name)"
+            } catch {
+                Write-Host "Could not stop process: $($_.Name) - $_"
+            }
+        }
 
-        foreach ($Path in $RegistryPaths) {
-            $Apps = Get-ItemProperty -Path $Path -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*$ProgramName*" }
+        # EXE / MSI uninstall using registry
+        foreach ($regPath in $registryPaths) {
+            Get-ItemProperty $regPath -ErrorAction SilentlyContinue | Where-Object {
+                $_.DisplayName -like "*$program*"
+            } | ForEach-Object {
+                $displayName = $_.DisplayName
+                $uninstallString = $_.UninstallString
+                $quietUninstallString = $_.QuietUninstallString
 
-            if ($Apps) {
-                $Remaining = $true
+                if ($uninstallString) {
+                    try {
+                        $command = if ($quietUninstallString) { $quietUninstallString } else { $uninstallString }
+                        $commandParts = $command -split '\s+', 2
+                        $exe = $commandParts[0].Trim('"')
+                        $args = if ($commandParts.Count -gt 1) { $commandParts[1] } else { '' }
 
-                foreach ($App in $Apps) {
-                    Write-Output "Found $ProgramName in registry."
-
-                    # 2️⃣ Stop Related Processes Only If Program Exists
-                    Write-Output "Checking for running processes related to $ProgramName..."
-                    $Processes = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like "*$ProgramName*" }
-                    if ($Processes) {
-                        Write-Output "Found running processes. Attempting to close them..."
-                        foreach ($Process in $Processes) {
-                            try {
-                                Stop-Process -Id $Process.Id -Force -ErrorAction Stop
-                                Write-Output "Successfully closed: $($Process.ProcessName) (PID: $($Process.Id))"
-                            } catch {
-                                Write-Output "Failed to close process $($Process.ProcessName). Trying taskkill..."
-                                Start-Process -FilePath "taskkill.exe" -ArgumentList "/F /IM $($Process.ProcessName).exe" -NoNewWindow -Wait
-                            }
-                        }
-                    }
-
-                    # **3️⃣ Prefer QuietUninstallString if available, otherwise use UninstallString**
-                    $UninstallString = $App.QuietUninstallString
-                    if (-not $UninstallString) {
-                        $UninstallString = $App.UninstallString
-                    }
-
-                    # Ensure UninstallString is a proper string
-                    $UninstallString = [string]$UninstallString -replace '"', ''
-
-                    # **4️⃣ Handle MSI-based uninstalls**
-                    if ($UninstallString -match "\{[0-9A-Fa-f\-]{36}\}") {
-                        Write-Output "Detected MSIExec uninstall command."
-
-                        # Extract only the GUID
-                        $GUID = $matches[0]
-                        Write-Output "Extracted MSI GUID: $GUID"
-
-                        # Construct a clean MSI uninstall command
-                        $Arguments = "/X $GUID /quiet /norestart /qn /passive"
-
-                        try {
-                            Write-Output "Executing MSI uninstall: msiexec.exe $Arguments"
-                            $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $Arguments -NoNewWindow -Wait -PassThru
-                            if ($process.ExitCode -eq 0) {
-                                Write-Output "$ProgramName (MSI) uninstalled successfully."
-                            } elseif ($process.ExitCode -eq 1605) {
-                                Write-Output "$ProgramName (MSI) not installed (Exit Code 1605)."
-                            } else {
-                                Write-Output "Failed to uninstall $ProgramName (MSI). Exit Code: $($process.ExitCode)"
-                            }
-                        } catch {
-                            Write-Output "Error uninstalling $ProgramName (MSI): $_"
-                        }
-
-                        continue  # Skip to the next program entry
-                    }
-
-                    # **5️⃣ Handle EXE-based uninstalls**
-                    if ($UninstallString -match ".*\.exe") {
-                        Write-Output "Running EXE Uninstaller: $UninstallString"
-
-                        # Extract EXE path and existing arguments
-                        if ($UninstallString -match '^"?(.*?\.exe)"?\s*(.*)$') {
-                            $ExePath = $matches[1]   # Extracts the EXE file path
-                            $ExeArguments = $matches[2] # Extracts everything after the EXE path (arguments)
-                        } else {
-                            $ExePath = $UninstallString
-                            $ExeArguments = ""
-                        }
-
-                        # Ensure EXE path is properly quoted
-                        if ($ExePath -notmatch '^".+"$') {
-                            $ExePath = "`"$ExePath`""  # Wrap EXE path in quotes if missing
-                        }
-
-                        # If the UninstallString contains key-pair arguments (e.g., scenario=install), preserve them
-                        if ($ExeArguments -match "=\w+") {
-                            Write-Output "Detected key-pair arguments in UninstallString. Preserving original parameters."
-                            $ExeArguments = "$ExeArguments DisplayLevel=False"  # Append only DisplayLevel=False
-                        } else {
-                            # If no structured key-pairs exist, append silent flags
-                            $SilentFlags = "/S /quiet /norestart /silent /VERYSILENT"
-                            if ($ExeArguments) {
-                                $ExeArguments = "$ExeArguments $SilentFlags"
-                            } else {
-                                $ExeArguments = $SilentFlags
-                            }
-                        }
-
-                        try {
-                            Write-Output "Executing: cmd.exe /c $ExePath $ExeArguments"
-                            $process = Start-Process -FilePath "cmd.exe" -ArgumentList "/c $ExePath $ExeArguments" -NoNewWindow -Wait -PassThru
-                            if ($process.ExitCode -eq 0) {
-                                Write-Output "$ProgramName (EXE) uninstalled successfully."
-                            } else {
-                                Write-Output "Uninstall failed for $ProgramName (EXE). Exit Code: $($process.ExitCode)"
-                            }
-                        } catch {
-                            Write-Output "Error uninstalling $ProgramName (EXE): $_"
-                        }
+                        Write-Host "Uninstalling (EXE/MSI): $displayName"
+                        Start-Process -FilePath $exe -ArgumentList $args -Wait -NoNewWindow
+                    } catch {
+                        Write-Host "Uninstall failed for $displayName: $_"
                     }
                 }
             }
         }
 
-        # **6️⃣ Remove Windows Store Apps (UWP Apps)**
-        $AppxPackages = Get-AppxPackage -AllUsers | Where-Object { $_.Name -ilike "*$ProgramName*" -or $_.PackageFamilyName -ilike "*$ProgramName*" }
-        if ($AppxPackages) {
-            $Remaining = $true
-            foreach ($App in $AppxPackages) {
-                Write-Output "Removing UWP App: $($App.PackageFullName)..."
-                try {
-                    Remove-AppxPackage -Package $App.PackageFullName -AllUsers -ErrorAction Stop
-                    Write-Output "$ProgramName removed successfully."
-                } catch {
-                    Write-Output "Failed to remove $ProgramName. Error: $_"
+        # GUID-based uninstall fallback
+        $msiGuidPattern = '^\{[0-9A-Fa-f\-]{36}\}$'
+        foreach ($regPath in $registryPaths) {
+            Get-ChildItem $regPath -ErrorAction SilentlyContinue | Where-Object {
+                $_.PSChildName -match $msiGuidPattern
+            } | ForEach-Object {
+                $props = Get-ItemProperty $_.PSPath
+                if ($props.DisplayName -like "*$program*") {
+                    try {
+                        Write-Host "Uninstalling via GUID: $($_.PSChildName)"
+                        Start-Process "msiexec.exe" -ArgumentList "/x $($_.PSChildName) /qn /norestart" -Wait -NoNewWindow
+                    } catch {
+                        Write-Host "GUID uninstall failed: $($_.PSChildName) - $_"
+                    }
                 }
             }
         }
 
-        # **7️⃣ Remove Provisioned Windows Store Apps (For Future Users)**
-        $ProvisionedApps = Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -ilike "*$ProgramName*" }
-        if ($ProvisionedApps) {
-            $Remaining = $true
-            foreach ($ProvApp in $ProvisionedApps) {
-                Write-Output "Removing provisioned package: $($ProvApp.PackageName)..."
-                try {
-                    Remove-AppxProvisionedPackage -Online -PackageName $ProvApp.PackageName -ErrorAction Stop
-                    Write-Output "$ProgramName removed successfully for future users."
-                } catch {
-                    Write-Output "Failed to remove provisioned package: $_"
-                }
+        # AppxPackage (UWP) user-level removal
+        $appxPackages = Get-AppxPackage -AllUsers | Where-Object { $_.Name -like "*$program*" -or $_.PackageFullName -like "*$program*" }
+        foreach ($pkg in $appxPackages) {
+            try {
+                Write-Host "Removing AppxPackage: $($pkg.Name)"
+                Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+            } catch {
+                Write-Host "Failed to remove AppxPackage: $($pkg.Name) - $_"
             }
         }
 
-        if (-not $Remaining) {
-            Write-Output "$ProgramName fully removed."
+        # AppxProvisionedPackage removal (future user installs)
+        $provPackages = Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like "*$program*" }
+        foreach ($provPkg in $provPackages) {
+            try {
+                Write-Host "Removing Provisioned Package: $($provPkg.DisplayName)"
+                Remove-AppxProvisionedPackage -Online -PackageName $provPkg.PackageName -ErrorAction SilentlyContinue
+            } catch {
+                Write-Host "Failed to remove provisioned Appx package: $($provPkg.DisplayName) - $_"
+            }
+        }
+
+        # Final check to confirm removal
+        $remaining = $false
+        foreach ($regPath in $registryPaths) {
+            $remaining = Get-ItemProperty $regPath -ErrorAction SilentlyContinue | Where-Object {
+                $_.DisplayName -like "*$program*"
+            }
+            if ($remaining) { break }
+        }
+
+        if ($remaining) {
+            Write-Host "$program still detected after uninstall attempts."
         } else {
-            Write-Output "$ProgramName still detected. Retrying ($Attempts/$MaxAttempts)..."
-            Start-Sleep -Seconds 3
+            Write-Host "$program fully removed."
         }
-    }
 
-    if ($Remaining) {
-        Write-Output "Could not completely remove $ProgramName after $MaxAttempts attempts."
+        Write-Host "---------------------------------------"
     }
 }
 
