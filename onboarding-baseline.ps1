@@ -151,113 +151,120 @@ $HPWolfList = @(
 )
 ########## DO NOT EDIT BELOW THIS LINE ##########
 
+function Get-UninstallRegistryEntries {
+    $registryPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+
+    $allEntries = foreach ($path in $registryPaths) {
+        Get-ItemProperty -Path $path -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName } |
+        Select-Object DisplayName, UninstallString, QuietUninstallString, PSChildName
+    }
+
+    return $allEntries
+}
+
 function Uninstall-Program {
     param (
         [Parameter(Mandatory)]
-        [string[]]$UninstallList
+        [string[]]$UninstallList,
+
+        [Parameter()]
+        [array]$RegistryEntries = $(Get-UninstallRegistryEntries)
     )
 
-    $registryPaths = @(
-        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
-    )
+    foreach ($programName in $UninstallList) {
+        Write-Host "`nSearching for: $programName"
 
-    foreach ($program in $UninstallList) {
-        Write-Host "`n=== Processing: $program ==="
+        $matches = $RegistryEntries | Where-Object { $_.DisplayName -like "*$programName*" }
 
-        # Stop associated processes
-        Get-Process | Where-Object { $_.Name -like "*$program*" } | ForEach-Object {
-            try {
-                Stop-Process -Id $_.Id -Force -ErrorAction Stop
-                Write-Host "Stopped process: $($_.Name)"
-            } catch {
-                Write-Host "Could not stop process: $($_.Name) - $_"
-            }
+        if (-not $matches) {
+            Write-Host "No registry uninstall entries found for: $programName"
         }
 
-        # EXE / MSI uninstall using registry
-        foreach ($regPath in $registryPaths) {
-            Get-ItemProperty $regPath -ErrorAction SilentlyContinue | Where-Object {
-                $_.DisplayName -like "*$program*"
-            } | ForEach-Object {
-                $displayName = $_.DisplayName
-                $uninstallString = $_.UninstallString
-                $quietUninstallString = $_.QuietUninstallString
+        foreach ($match in $matches) {
+            $displayName = $match.DisplayName
+            $uninstallCmd = $match.QuietUninstallString
+            if (-not $uninstallCmd) {
+                $uninstallCmd = $match.UninstallString
+            }
 
-                if ($uninstallString) {
-                    try {
-                        $command = if ($quietUninstallString) { $quietUninstallString } else { $uninstallString }
-                        $commandParts = $command -split '\s+', 2
-                        $exe = $commandParts[0].Trim('"')
-                        $args = if ($commandParts.Count -gt 1) { $commandParts[1] } else { '' }
+            if (-not $uninstallCmd) {
+                Write-Warning "No uninstall string found for $displayName. Skipping..."
+                continue
+            }
 
-                        Write-Host "Uninstalling (EXE/MSI): $displayName"
-                        Start-Process -FilePath $exe -ArgumentList $args -Wait -NoNewWindow
-                    } catch {
-                        Write-Host "Uninstall failed for $displayName: $_"
-                    }
+            Write-Host "Found: $displayName"
+            Write-Host "Original Uninstall Command: $uninstallCmd"
+
+            try {
+                if ($uninstallCmd -match "msiexec\.exe") {
+                    Start-Process "msiexec.exe" -ArgumentList "/x $($match.PSChildName) /qn /norestart" -Wait -NoNewWindow
                 }
-            }
-        }
+                elseif ($uninstallCmd -match '\.exe') {
+                    # Split path and args
+                    $exeParts = $uninstallCmd -split '\.exe', 2
+                    $exePath = ($exeParts[0] + '.exe').Trim()
+                    $exeArgs = if ($exeParts.Count -gt 1) { $exeParts[1].Trim() } else { '' }
 
-        # GUID-based uninstall fallback
-        $msiGuidPattern = '^\{[0-9A-Fa-f\-]{36}\}$'
-        foreach ($regPath in $registryPaths) {
-            Get-ChildItem $regPath -ErrorAction SilentlyContinue | Where-Object {
-                $_.PSChildName -match $msiGuidPattern
-            } | ForEach-Object {
-                $props = Get-ItemProperty $_.PSPath
-                if ($props.DisplayName -like "*$program*") {
-                    try {
-                        Write-Host "Uninstalling via GUID: $($_.PSChildName)"
-                        Start-Process "msiexec.exe" -ArgumentList "/x $($_.PSChildName) /qn /norestart" -Wait -NoNewWindow
-                    } catch {
-                        Write-Host "GUID uninstall failed: $($_.PSChildName) - $_"
+                    # Wrap exe in quotes
+                    if ($exePath -notmatch '^".+"$') {
+                        $exePath = "`"$exePath`""
                     }
+
+                    # Add silent flags if not present
+                    if ($exeArgs -notmatch "/(quiet|silent|s|qn|norestart)") {
+                        $exeArgs += " /quiet /s /qn /norestart"
+                    }
+
+                    Start-Process -FilePath $exePath -ArgumentList $exeArgs -Wait -NoNewWindow
                 }
-            }
-        }
+                else {
+                    # Fallback: run via cmd.exe
+                    Start-Process "cmd.exe" -ArgumentList "/c $uninstallCmd /quiet /norestart" -Wait -NoNewWindow
+                }
 
-        # AppxPackage (UWP) user-level removal
-        $appxPackages = Get-AppxPackage -AllUsers | Where-Object { $_.Name -like "*$program*" -or $_.PackageFullName -like "*$program*" }
-        foreach ($pkg in $appxPackages) {
-            try {
-                Write-Host "Removing AppxPackage: $($pkg.Name)"
-                Remove-AppxPackage -Package $pkg.PackageFullName -AllUsers -ErrorAction SilentlyContinue
+                Start-Sleep -Seconds 2
             } catch {
-                Write-Host "Failed to remove AppxPackage: $($pkg.Name) - $_"
+                Write-Warning "Uninstall failed for $displayName : $_"
+            }
+
+            # Kill browser popups (just in case)
+            Get-Process -Name "chrome","msedge","firefox" -ErrorAction SilentlyContinue | Stop-Process -Force
+
+            # Check if still installed by ID
+            $matchID = $match.PSChildName
+            $stillInstalled = $RegistryEntries | Where-Object { $_.PSChildName -eq $matchID }
+
+            if ($stillInstalled) {
+                Write-Warning "$displayName still appears installed. Attempting registry removal..."
+                $keyPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\$matchID"
+                Remove-Item -Path $keyPath -Force -ErrorAction SilentlyContinue
+            } else {
+                Write-Host "$displayName uninstalled successfully."
             }
         }
 
-        # AppxProvisionedPackage removal (future user installs)
-        $provPackages = Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like "*$program*" }
-        foreach ($provPkg in $provPackages) {
-            try {
-                Write-Host "Removing Provisioned Package: $($provPkg.DisplayName)"
-                Remove-AppxProvisionedPackage -Online -PackageName $provPkg.PackageName -ErrorAction SilentlyContinue
-            } catch {
-                Write-Host "Failed to remove provisioned Appx package: $($provPkg.DisplayName) - $_"
-            }
+        # Handle Appx Packages
+        $appxMatches = Get-AppxPackage -Name "*$programName*" -ErrorAction SilentlyContinue
+        foreach ($pkg in $appxMatches) {
+            Write-Host "Removing Appx package: $($pkg.Name)"
+            Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction SilentlyContinue
         }
 
-        # Final check to confirm removal
-        $remaining = $false
-        foreach ($regPath in $registryPaths) {
-            $remaining = Get-ItemProperty $regPath -ErrorAction SilentlyContinue | Where-Object {
-                $_.DisplayName -like "*$program*"
-            }
-            if ($remaining) { break }
+        $provPkg = Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like "*$programName*" }
+        foreach ($prov in $provPkg) {
+            Write-Host "Removing provisioned Appx package: $($prov.DisplayName)"
+            Remove-AppxProvisionedPackage -Online -PackageName $prov.PackageName -ErrorAction SilentlyContinue
         }
 
-        if ($remaining) {
-            Write-Host "$program still detected after uninstall attempts."
-        } else {
-            Write-Host "$program fully removed."
-        }
-
-        Write-Host "---------------------------------------"
+        Write-Host "Uninstall checks completed for: $programName`n"
     }
 }
+
 
 $LogPath = "C:\kworking\onboarding-log_$env:COMPUTERNAME.txt"
 Start-Transcript -Path $LogPath -Append
@@ -289,8 +296,8 @@ if (-not (Get-Module -ListAvailable -Name ActiveDirectory)) {
 }
 
 # Define domain search base and target OU
-$domainBase = "DC=upa,DC=com"
-$targetOU   = "OU=Workstations,DC=upa,DC=com"
+$domainBase = "DC=unitedpropertyassociates,DC=com"
+$targetOU   = "OU=Unassigned,OU=UPA-Workstations,DC=unitedpropertyassociates,DC=com"
  
 # Ensure AD module is available
 Import-Module ActiveDirectory -ErrorAction Stop
@@ -315,24 +322,28 @@ $descriptionInput = Read-Host "Enter new description (ENTER to keep current: '$(
 $serialInput      = Read-Host "Enter new serial number (ENTER to keep current: '$($computer.serialNumber)')"
  
 # Build a hashtable for properties to update
-$updateProps = @{}
+$replaceProps = @{}
  
-if ($descriptionInput) { $updateProps["Description"] = $descriptionInput }
-if ($serialInput)      { $updateProps["serialNumber"] = $serialInput }
+if ($descriptionInput) { $replaceProps["Description"] = $descriptionInput }
+if ($serialInput)      { $replaceProps["serialNumber"] = $serialInput }
  
 # Always clear managedBy and physicalDeliveryOfficeName
-$updateProps["managedBy"] = $null
-$updateProps["physicalDeliveryOfficeName"] = $null
+$clearProps @("managedBy","physicalDeliveryOfficeName")
  
 # Perform AD object update
-if ($updateProps.Count -gt 0) {
-    try {
-        Set-ADComputer -Identity $computer.DistinguishedName @updateProps
-        Write-Host "Computer object updated successfully."
-    }
-    catch {
-        Write-Error "Failed to update computer object attributes: $_"
-    }
+try {
+	if ($replaceProps.Count -gt 0) {
+		Set-ADComputer -Identity $computer.DistinguishedName -Replace $replaceProps
+	}
+	
+	if ($clearProps.Count -gt 0) {
+		Set-ADComputer -Identity $computer.DistinguishedName -Clear $clearProps
+	}
+	
+	Write-Host "Computer Object updated successfully."
+}
+catch {
+	Write-Error "Failed to update Computer Object attributes: $_"
 }
  
 # Attempt to move the computer object to the correct OU
@@ -341,7 +352,7 @@ try {
     Write-Host "Successfully moved '$($computer.Name)' to OU: $targetOU"
 }
 catch {
-    Write-Error "❗ Failed to move computer object: $_"
+    Write-Error "Failed to move computer object: $_"
 }
  
 ## Uninstall Cycle
@@ -359,9 +370,11 @@ $backupHttps = Get-ItemProperty -Path $httpsKey -ErrorAction SilentlyContinue
 Write-Output "Starting uninstallation of specified programs..."
 
 ## Call Uninstall Function
-foreach ($Program in $UninstallList) {
-    Uninstall-Program -ProgramName $Program
-}
+# Registry entries cache
+$RegistryCache = Get-UninstallRegistryEntries
+
+# Call the Uninstall-Program function
+Uninstall-Program -UninstallList $UninstallList -RegistryEntries $RegistryCache
 
 Write-Output "Uninstallation process completed."
 
@@ -438,12 +451,24 @@ foreach ($User in $Users) {
 }
 
 ## Run System File Checker (SFC) to scan and repair system files
-Write-Host "Running System File Checker (sfc /scannow)..." -ForegroundColor Yellow
-Start-Process -FilePath "sfc.exe" -ArgumentList "/scannow" -Wait -NoNewWindow
+Write-Host "Running System File Checker..."
+$sfcResult = Start-Process -FilePath "sfc.exe" -ArgumentList "/scannow" -Wait -NoNewWindow -PassThru
+if ($sfcResult.ExitCode -ne 0) {
+    Write-Host "SFC failed or found issues. Exit Code: $($sfcResult.ExitCode)"
+}
 
 ## Run DISM to Repair Windows Image
-Write-Host "Checking and repairing Windows image with DISM..." -ForegroundColor Yellow
-Start-Process -FilePath "dism.exe" -ArgumentList "/Online /Cleanup-Image /RestoreHealth" -Wait -NoNewWindow
+Write-Host "Running DISM /ScanHealth..."
+$scanHealth = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/cleanup-image", "/scanhealth" -Wait -NoNewWindow -PassThru
+if ($scanHealth.ExitCode -ne 0) {
+    Write-Host "DISM ScanHealth failed. Exit Code: $($scanHealth.ExitCode)"
+}
+
+Write-Host "Running DISM /RestoreHealth..."
+$restoreHealth = Start-Process -FilePath "dism.exe" -ArgumentList "/online", "/cleanup-image", "/restorehealth" -Wait -NoNewWindow -PassThru
+if ($restoreHealth.ExitCode -ne 0) {
+    Write-Host "DISM RestoreHealth failed. Exit Code: $($restoreHealth.ExitCode)"
+}
 
 ## Run CHKDSK (Without Reboot) to Check for Disk Errors
 Write-Host "Checking for disk errors on C: (CHKDSK /scan)..." -ForegroundColor Yellow
@@ -452,6 +477,14 @@ Start-Process -FilePath "chkdsk.exe" -ArgumentList "C: /scan" -Wait -NoNewWindow
 ## Force Group Policy Update
 Write-Host "Updating Group Policies..." -ForegroundColor Yellow
 Start-Process -FilePath "gpupdate.exe" -ArgumentList "/force" -Wait -NoNewWindow
+
+## Run Repair of Windows Update
+Write-Host "Checking Windows Update components..."
+try {
+    Start-Process -FilePath "PowerShell" -ArgumentList "-NoProfile", "-Command Reset-WindowsUpdateComponents" -Wait -NoNewWindow
+} catch {
+    Write-Host "Windows Update repair failed: $_"
+}
 
 ## Check and Install Pending Windows Updates
 Write-Host "Checking for Windows updates..." -ForegroundColor Yellow
