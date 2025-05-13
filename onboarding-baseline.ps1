@@ -151,13 +151,11 @@ $HPWolfList = @(
 )
 
 # Define any custom uninstall argument overrides here
-$CustomUninstallArgs = @{
-    "FortiClient"   = "/quiet /norestart REMOVE=ALL"
-    "Zoom"          = "/uninstall /quiet"
-    "Firefox" = "/S" # silent for Firefox uninstaller
-    "Chrome" = "--uninstall --force-uninstall --multi-install"
-	"Kaseya" = "/s /r"
-}
+$UseOriginalUninstallString = @(
+    "Firefox"
+    "Google Chrome"
+	"Kaseya Agent"
+)
 ########## DO NOT EDIT BELOW THIS LINE ##########
 
 function Get-UninstallRegistryEntries {
@@ -185,7 +183,7 @@ function Uninstall-Program {
         [array]$RegistryEntries = $(Get-UninstallRegistryEntries),
 
         [Parameter()]
-        [hashtable]$CustomUninstallArgs = @{}
+		[string[]]$UseOriginalUninstallString = @()
     )
 
     $standardArgs = @{
@@ -218,20 +216,30 @@ function Uninstall-Program {
             Write-Host "Found: $displayName"
             Write-Host "Original Uninstall Command: $uninstallCmd"
 
+            # Check if we should use the original uninstall string
+            $useOriginal = $false
+            foreach ($term in $UseOriginalUninstallString) {
+                if ($displayName.ToLower() -like "*$($term.ToLower())*") {
+                    $useOriginal = $true
+                    break
+                }
+            }
+
+            if ($useOriginal -eq $true) {
+                Write-Host "Using original uninstall command for: $displayName"
+                Write-Host "Running: $uninstallCmd"
+                try {
+                    Start-Process -FilePath "cmd.exe" -ArgumentList "/c $uninstallCmd" -Wait -NoNewWindow
+                    Start-Sleep -Seconds 2
+                } catch {
+                    Write-Warning "Uninstall failed for $displayName using original string: $_"
+                }
+                continue
+            }
+			
             try {
                 $exeCandidate = ($uninstallCmd -split '\s+')[0].Trim('"')
                 $exeName = [System.IO.Path]::GetFileName($exeCandidate)
-
-                # Find the override if the display name contains the key (case-insensitive)
-				$customArgs = $null
-				foreach ($key in $CustomUninstallArgs.Keys) {
-					if ($displayName -like "*$key*") {
-						$customArgs = $CustomUninstallArgs[$key]
-						Write-Host "🔧 Override found for '$displayName': $customArgs"
-						break
-					}
-				}
-
 
                 if ($exeName -ieq "msiexec.exe") {
                     $productCode = if ($uninstallCmd -match '{.*}') {
@@ -241,11 +249,11 @@ function Uninstall-Program {
                     }
 
                     $exePath = "msiexec.exe"
-                    $argTail = if ($customArgs) {
-									$argTail = $customArgs
-								} else {
-									$argTail = $standardArgs['exe']
-								}
+                    if ($customArgs) {
+						$argTail = $customArgs
+					} else {
+						$argTail = $standardArgs['msi']
+					}
                     $args = "/x $productCode $argTail"
                     Write-Host "Start-Process -FilePath $exePath -ArgumentList '$args'"
                     Start-Process -FilePath $exePath -ArgumentList $args -Wait -NoNewWindow
@@ -259,11 +267,11 @@ function Uninstall-Program {
                             $exePath = "`"$exePath`""
                         }
 
-                        $argTail = if ($customArgs) {
-										$argTail = $customArgs
-									} else {
-										$argTail = $standardArgs['msi']
-									}
+                        if ($customArgs) {
+							$argTail = $customArgs
+						} else {
+							$argTail = $standardArgs['exe']
+						}
                         Write-Host "Start-Process -FilePath $exePath -ArgumentList '$argTail'"
                         Start-Process -FilePath $exePath -ArgumentList $argTail -Wait -NoNewWindow
                     } else {
@@ -272,16 +280,12 @@ function Uninstall-Program {
                     }
                 }
                 else {
-                    $argTail = if ($customArgs) {
-									$argTail = $customArgs
-								} else {
-									$argTail = $standardArgs['fallback']
-								}
+                    $argTail = $standardArgs['fallback']
                     $args = "/c $uninstallCmd $argTail"
                     Write-Host "Start-Process -FilePath cmd.exe -ArgumentList '$args'"
                     Start-Process "cmd.exe" -ArgumentList $args -Wait -NoNewWindow
                 }
-
+				
                 Start-Sleep -Seconds 2
             } catch {
                 Write-Warning "Uninstall failed for $displayName : $_"
