@@ -156,6 +156,12 @@ $UseOriginalUninstallString = @(
     "Google Chrome"
 	"Kaseya Agent"
 )
+
+$UninstallCommandSuffixOverrides = @{
+    "Chrome" = "--force-uninstall"
+	"Kaseya" = "/s"
+}
+
 ########## DO NOT EDIT BELOW THIS LINE ##########
 
 function Get-UninstallRegistryEntries {
@@ -183,7 +189,10 @@ function Uninstall-Program {
         [array]$RegistryEntries = $(Get-UninstallRegistryEntries),
 
         [Parameter()]
-		[string[]]$UseOriginalUninstallString = @()
+		[string[]]$UseOriginalUninstallString = @(),
+		
+		[Parameter()]
+		[hashtable]$UninstallCommandSuffixOverrides = @{}
     )
 
     $standardArgs = @{
@@ -203,6 +212,10 @@ function Uninstall-Program {
 
         foreach ($match in $matches) {
             $displayName  = $match.DisplayName
+			# DEBUG: Check what we're trying to match against
+			Write-Host "Checking for override match on display name: '$displayName'"
+			Write-Host "UseOriginalUninstallString list: $($UseOriginalUninstallString -join ', ')"
+
             $uninstallCmd = $match.QuietUninstallString
             if (-not $uninstallCmd) {
                 $uninstallCmd = $match.UninstallString
@@ -218,18 +231,36 @@ function Uninstall-Program {
 
             # Check if we should use the original uninstall string
             $useOriginal = $false
-            foreach ($term in $UseOriginalUninstallString) {
-                if ($displayName.ToLower() -like "*$($term.ToLower())*") {
-                    $useOriginal = $true
-                    break
-                }
-            }
+			foreach ($term in $UseOriginalUninstallString) {
+				$termLower = $term.ToLower()
+				$nameLower = $displayName.ToLower()
+				Write-Host "Comparing '$nameLower' -like '*$termLower*'"
+				if ($nameLower -like "*$termLower*") {
+					Write-Host "Matched override pattern: '$term'"
+					$useOriginal = $true
+					break
+				}
+			}
+
 
             if ($useOriginal -eq $true) {
                 Write-Host "Using original uninstall command for: $displayName"
                 Write-Host "Running: $uninstallCmd"
-                try {
-                    Start-Process -FilePath "cmd.exe" -ArgumentList "/c $uninstallCmd" -Wait -NoNewWindow
+				
+				# Append known suffix arguments if necessary
+				foreach ($suffixKey in $UninstallCommandSuffixOverrides.Keys) {
+					if ($displayName.ToLower() -like "*$($suffixKey.ToLower())*") {
+						$suffix = $UninstallCommandSuffixOverrides[$suffixKey]
+						Write-Host "Appending extra uninstall flags: $suffix"
+						$uninstallCmd = "$uninstallCmd $suffix"
+						break
+					}
+				}
+				
+                Write-Host "Final uninstallCmd: $uninstallCmd"
+				
+				try {
+					Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$uninstallCmd`"" -Wait -NoNewWindow
                     Start-Sleep -Seconds 2
                 } catch {
                     Write-Warning "Uninstall failed for $displayName using original string: $_"
@@ -424,7 +455,7 @@ Write-Output "Starting uninstallation of specified programs..."
 $RegistryCache = Get-UninstallRegistryEntries
 
 # Call the Uninstall-Program function
-Uninstall-Program -UninstallList $UninstallList -RegistryEntries $RegistryCache
+Uninstall-Program -UninstallList $UninstallList -RegistryEntries $RegistryCache -UseOriginalUninstallString $UseOriginalUninstallString -UninstallCommandSuffixOverrides $UninstallCommandSuffixOverrides
 
 Write-Output "Uninstallation process completed."
 
