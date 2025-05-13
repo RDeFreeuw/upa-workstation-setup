@@ -1,7 +1,7 @@
 # Define the network location and local temporary folder
 ## Edit to reflect source and destination of your software installation files.
 ## Comment out '$NetworkPath' if you intend to move files outside of this script.
-$NetworkPath = "\\upa-azdc1\deploy$\SoftwareInstall_Baseline"
+$NetworkPath = "\\UPADC\deploy$\SoftwareInstall_Baseline"
 $LocalTempFolder = "C:\temp\SoftwareInstall"
 
 # Define the list of software to install
@@ -149,6 +149,15 @@ $HPWolfList = @(
 	"HP Wolf Security - Console"
     "HP Security Update Service"
 )
+
+# Define any custom uninstall argument overrides here
+$CustomUninstallArgs = @{
+    "FortiClient"   = "/quiet /norestart REMOVE=ALL"
+    "Zoom"          = "/uninstall /quiet"
+    "Firefox" = "/S" # silent for Firefox uninstaller
+    "Chrome" = "--uninstall --force-uninstall --multi-install"
+	"Kaseya" = "/s /r"
+}
 ########## DO NOT EDIT BELOW THIS LINE ##########
 
 function Get-UninstallRegistryEntries {
@@ -173,8 +182,17 @@ function Uninstall-Program {
         [string[]]$UninstallList,
 
         [Parameter()]
-        [array]$RegistryEntries = $(Get-UninstallRegistryEntries)
+        [array]$RegistryEntries = $(Get-UninstallRegistryEntries),
+
+        [Parameter()]
+        [hashtable]$CustomUninstallArgs = @{}
     )
+
+    $standardArgs = @{
+        "msi"      = "/qn /norestart"
+        "exe"      = "/quiet /s /qn /norestart"
+        "fallback" = "/quiet /norestart"
+    }
 
     foreach ($programName in $UninstallList) {
         Write-Host "`nSearching for: $programName"
@@ -186,7 +204,7 @@ function Uninstall-Program {
         }
 
         foreach ($match in $matches) {
-            $displayName = $match.DisplayName
+            $displayName  = $match.DisplayName
             $uninstallCmd = $match.QuietUninstallString
             if (-not $uninstallCmd) {
                 $uninstallCmd = $match.UninstallString
@@ -201,30 +219,67 @@ function Uninstall-Program {
             Write-Host "Original Uninstall Command: $uninstallCmd"
 
             try {
-                if ($uninstallCmd -match "msiexec\.exe") {
-                    Start-Process "msiexec.exe" -ArgumentList "/x $($match.PSChildName) /qn /norestart" -Wait -NoNewWindow
+                $exeCandidate = ($uninstallCmd -split '\s+')[0].Trim('"')
+                $exeName = [System.IO.Path]::GetFileName($exeCandidate)
+
+                # Find the override if the display name contains the key (case-insensitive)
+				$customArgs = $null
+				foreach ($key in $CustomUninstallArgs.Keys) {
+					if ($displayName -like "*$key*") {
+						$customArgs = $CustomUninstallArgs[$key]
+						Write-Host "🔧 Override found for '$displayName': $customArgs"
+						break
+					}
+				}
+
+
+                if ($exeName -ieq "msiexec.exe") {
+                    $productCode = if ($uninstallCmd -match '{.*}') {
+                        [regex]::Match($uninstallCmd, '{.*}').Value
+                    } else {
+                        $match.PSChildName
+                    }
+
+                    $exePath = "msiexec.exe"
+                    $argTail = if ($customArgs) {
+									$argTail = $customArgs
+								} else {
+									$argTail = $standardArgs['exe']
+								}
+                    $args = "/x $productCode $argTail"
+                    Write-Host "Start-Process -FilePath $exePath -ArgumentList '$args'"
+                    Start-Process -FilePath $exePath -ArgumentList $args -Wait -NoNewWindow
                 }
                 elseif ($uninstallCmd -match '\.exe') {
-                    # Split path and args
-                    $exeParts = $uninstallCmd -split '\.exe', 2
-                    $exePath = ($exeParts[0] + '.exe').Trim()
-                    $exeArgs = if ($exeParts.Count -gt 1) { $exeParts[1].Trim() } else { '' }
+                    $regexResult = [regex]::Match($uninstallCmd, '(^\"?.+?\.exe\")|(^\S+?\.exe)')
+                    if ($regexResult.Success) {
+                        $exePath = $regexResult.Value.Trim('"')
 
-                    # Wrap exe in quotes
-                    if ($exePath -notmatch '^".+"$') {
-                        $exePath = "`"$exePath`""
+                        if ($exePath -notmatch '^".+"$') {
+                            $exePath = "`"$exePath`""
+                        }
+
+                        $argTail = if ($customArgs) {
+										$argTail = $customArgs
+									} else {
+										$argTail = $standardArgs['msi']
+									}
+                        Write-Host "Start-Process -FilePath $exePath -ArgumentList '$argTail'"
+                        Start-Process -FilePath $exePath -ArgumentList $argTail -Wait -NoNewWindow
+                    } else {
+                        Write-Warning "Could not extract executable path from: $uninstallCmd"
+                        continue
                     }
-
-                    # Add silent flags if not present
-                    if ($exeArgs -notmatch "/(quiet|silent|s|qn|norestart)") {
-                        $exeArgs += " /quiet /s /qn /norestart"
-                    }
-
-                    Start-Process -FilePath $exePath -ArgumentList $exeArgs -Wait -NoNewWindow
                 }
                 else {
-                    # Fallback: run via cmd.exe
-                    Start-Process "cmd.exe" -ArgumentList "/c $uninstallCmd /quiet /norestart" -Wait -NoNewWindow
+                    $argTail = if ($customArgs) {
+									$argTail = $customArgs
+								} else {
+									$argTail = $standardArgs['fallback']
+								}
+                    $args = "/c $uninstallCmd $argTail"
+                    Write-Host "Start-Process -FilePath cmd.exe -ArgumentList '$args'"
+                    Start-Process "cmd.exe" -ArgumentList $args -Wait -NoNewWindow
                 }
 
                 Start-Sleep -Seconds 2
@@ -232,10 +287,9 @@ function Uninstall-Program {
                 Write-Warning "Uninstall failed for $displayName : $_"
             }
 
-            # Kill browser popups (just in case)
-            Get-Process -Name "chrome","msedge","firefox" -ErrorAction SilentlyContinue | Stop-Process -Force
+            # Kill browser popups
+            Get-Process -Name "chrome", "msedge", "firefox" -ErrorAction SilentlyContinue | Stop-Process -Force
 
-            # Check if still installed by ID
             $matchID = $match.PSChildName
             $stillInstalled = $RegistryEntries | Where-Object { $_.PSChildName -eq $matchID }
 
@@ -248,13 +302,14 @@ function Uninstall-Program {
             }
         }
 
-        # Handle Appx Packages
+        # Handle Appx
         $appxMatches = Get-AppxPackage -Name "*$programName*" -ErrorAction SilentlyContinue
         foreach ($pkg in $appxMatches) {
             Write-Host "Removing Appx package: $($pkg.Name)"
             Remove-AppxPackage -Package $pkg.PackageFullName -ErrorAction SilentlyContinue
         }
 
+        # Handle provisioned Appx
         $provPkg = Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -like "*$programName*" }
         foreach ($prov in $provPkg) {
             Write-Host "Removing provisioned Appx package: $($prov.DisplayName)"
@@ -265,15 +320,6 @@ function Uninstall-Program {
     }
 }
 
-
-$LogPath = "C:\kworking\onboarding-log_$env:COMPUTERNAME.txt"
-Start-Transcript -Path $LogPath -Append
-
-# Ensure the script is running with administrator privileges
-if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
-    Write-Host "This script must be run as Administrator!" -ForegroundColor Red
-    exit 1
-}
 
 ## Update Active Directory to Reflect Device Type and Unassigned Status
 
@@ -328,7 +374,7 @@ if ($descriptionInput) { $replaceProps["Description"] = $descriptionInput }
 if ($serialInput)      { $replaceProps["serialNumber"] = $serialInput }
  
 # Always clear managedBy and physicalDeliveryOfficeName
-$clearProps @("managedBy","physicalDeliveryOfficeName")
+$clearProps = @("managedBy","physicalDeliveryOfficeName")
  
 # Perform AD object update
 try {
@@ -495,6 +541,8 @@ If(-not(Get-InstalledModule PSWindowsUpdate -ErrorAction SilentlyContinue)){
 	Install-Module PSWindowsUpdate -Confirm:$False -Force
 }
 Get-WindowsUpdate -Install -AcceptAll -IgnoreReboot
+Add-WindowsCapability -Online -Name "SNMP.Client~~~~0.0.1.0"
+Add-WindowsCapability -Online -Name "WMI-SNMP-Provider.Client~~~~0.0.1.0"
 
 ## Schedule CHKDSK on C: for next reboot (full repair)
 Write-Host "Scheduling CHKDSK for C: on next reboot..." -ForegroundColor Yellow
