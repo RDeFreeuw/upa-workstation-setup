@@ -1,30 +1,39 @@
 # Define the network location and local temporary folder
 ## Edit to reflect source and destination of your software installation files.
 ## Comment out '$NetworkPath' if you intend to move files outside of this script.
-$NetworkPath = "\\UPADC\deploy$\SoftwareInstall_Baseline"
+
+$NetworkPath = "\\UPA\SHARE$\SoftwareInstall_Baseline"
 $LocalTempFolder = "C:\temp\SoftwareInstall"
 
 # Define the list of software to install
 ## Path MUST be location of installation file FROM 'LocalTempFolder' : i.e. "'C:\temp\SoftwareInstall' \ 'nextiva\Nextiva-win.exe'"
+
 $SoftwareList = @(
-    @{Name = "Cisco VPN"; Path = "cisco-secure-client\cisco-secure-client.msi"; Arguments = "/qn /norestart"}
-    @{Name = "Cisco VPN Profile"; Path = "cisco-secure-client\profile-copy.bat"; Arguments = ""}
     @{Name = "Chrome"; Path = "chrome\ChromeSetup.exe"; Arguments = "/silent /install"}
-    @{Name = "Wondershare"; Path = "wondershare\pdfelement8_en.exe"; Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-"}
     @{Name = "Adobe Reader"; Path = "adobe-reader\adobe-reader.exe"; Arguments = "/sAll /silent /install"}
     @{Name = "VLC Media Player"; Path = "vlc\vlc.exe"; Arguments = "/L=1033 /S"}
     @{Name = "7zip Archiver"; Path = "7zip\7zip.exe"; Arguments = "/S"}
+    @{Name = "Eclipse OpenJDK"; Path = "Eclipse\openjdk.msi"; Arguments = "ADDLOCAL=FeatureMain,FeatureEnvironment,FeatureJarFileRunWith,FeatureJavaHome INSTALLDIR='c:\Program Files\Temurin\' /qn"}
     @{Name = "MS Office"; Path = "ms-office-deployment\ms-office-install.bat"; Arguments = ""}
+)
+
+# Define Windows Optional Features that are to be installed, outside of WindowsUpdate
+
+$FeatureList = @(
+	"SNMP.Client~~~~0.0.1.0"
+	"WINS.Client~~~~0.0.1.0"
 )
 
 # Define programs to uninstall (Program Display Names as seen in "Apps & Features")
 ## Script can handle AppxPackages and UWP App names and GUID if known; it SHOULD hunt everything down on its own, but the more detail for your specific package, the better.
+
 $UninstallList = @(
 
 ### Windows Default Apps ###
 	"Copilot"
 	"Copilot 365"
 	"Cortana"
+	"Linkedin"
 	"Mail and Calendar"
 	"Maps"
 	"Microsoft 365"
@@ -44,66 +53,88 @@ $UninstallList = @(
 	"Microsoft.BingNews"
 	"Microsoft.GamingApp"
 	"Microsoft.GetHelp"
-    "Microsoft.Getstarted"
+ 	"Microsoft.Getstarted"
 	"Microsoft.Microsoft3DViewer"
-    "Microsoft.MicrosoftOfficeHub"
-    "Microsoft.MicrosoftSolitaireCollection"
+ 	"Microsoft.MicrosoftOfficeHub"
+  	"Microsoft.MicrosoftSolitaireCollection"
 	"Microsoft.MixedReality.Portal"
 	"Microsoft.News"
 	"Microsoft.Office.Lens"
 	"Microsoft.Office.OneNote"
 	"Microsoft.OutlookForWindows"
-    "Microsoft.People"
+ 	"Microsoft.People"
 	"Microsoft.SkyeApp"
 	"MicrosoftTeams"
 	"Microsoft.Wallet"
-    "microsoft.windowscommunicationsapps"
-    "Microsoft.WindowsFeedbackHub"
-    "Microsoft.Xbox.TCUI"
-    "Microsoft.XboxGameOverlay"
-    "Microsoft.XboxGamingOverlay"
-    "Microsoft.XboxIdentityProvider"
-    "Microsoft.XboxSpeechToTextOverlay"
-    "Microsoft.XboxApp"
+	"microsoft.windowscommunicationsapps"
+	"Microsoft.WindowsFeedbackHub"
+	"Microsoft.Xbox.TCUI"
+	"Microsoft.XboxGameOverlay"
+	"Microsoft.XboxGamingOverlay"
+	"Microsoft.XboxIdentityProvider"
+	"Microsoft.XboxSpeechToTextOverlay"
+	"Microsoft.XboxApp"
 	"Microsoft.YourPhone"
 	"Microsoft.ZuneMusic"
-    "Microsoft.ZuneVideo"
+	"Microsoft.ZuneVideo"
 	"MicrosoftCorporationII.MicrosoftFamily"
 	"MicrosoftCorporationII.QuickAssist"
 	"MicrosoftWindows.Client.WebExperience"
 	"MicrosoftWindows.CrossDevice"
+	"Windows 11 Installation Assistant"
 	
 ### HP Bloatware ###
 	"HP Connection Optimizer"
 	"HP Documentation"
+	"HP Jumpstart"
 	"HP Notifications"
-    "HP PC Hardware Diagnostics Windows"
+	"HP PC Hardware Diagnostics Windows"
 	"HP Privacy Settings"
-	"HP SMART"
+	"HP Smart"
 	"HP Support Assistant"
 	"HP Sure Recover"
-    "HP Sure Run Module"
+	"HP Sure Run Module"
 	"HP System Information"
+	"HPSmartDeviceAgentBase"
 	"myHP"
 	"AD2F1837.HPJumpStarts"
-    "AD2F1837.HPPCHardwareDiagnosticsWindows"
-    "AD2F1837.HPPowerManager"
-    "AD2F1837.HPPrivacySettings"
-    "AD2F1837.HPSupportAssistant"
-    "AD2F1837.HPSureShieldAI"
-    "AD2F1837.HPSystemInformation"
-    "AD2F1837.HPQuickDrop"
-    "AD2F1837.HPWorkWell"
-    "AD2F1837.myHP"
-    "AD2F1837.HPDesktopSupportUtilities"
-    "AD2F1837.HPQuickTouch"
-    "AD2F1837.HPEasyClean"
-    "AD2F1837.HPSystemInformation"
+	"AD2F1837.HPPCHardwareDiagnosticsWindows"
+	"AD2F1837.HPPowerManager"
+	"AD2F1837.HPPrivacySettings"
+	"AD2F1837.HPSupportAssistant"
+	"AD2F1837.HPSureShieldAI"
+	"AD2F1837.HPSystemInformation"
+	"AD2F1837.HPQuickDrop"
+	"AD2F1837.HPWorkWell"
+	"AD2F1837.myHP"
+	"AD2F1837.HPDesktopSupportUtilities"
+	"AD2F1837.HPQuickTouch"
+	"AD2F1837.HPEasyClean"
+	"AD2F1837.HPSystemInformation"
 	
-### UPA Obsolete Apps ###
+### Other Software ###
 	"Actian"
 	"ASUS"
 	"Allworx Interact"
+	"BleachBit"
+	"Bonjour"
+	"Canon IJ Network"
+	"Canon IJ Printer"
+	"Canon IJ Scan"
+	"Canon Inkjet"
+	"Canon TS9500"
+	"HP LaserJet E50145"
+	"Java"
+	"Microsoft ODBC"
+	"Netgear"
+	"Netsurion"
+	"Notepad++"
+	"NPCap"
+	"Printer Registration"
+	"Scribe"
+	"Wireshark"
+	
+### UPA Obsolete Apps ###
 	"Citrix"
 	"Ecosystem agent"
 	"File Cache Service Agent"
@@ -116,16 +147,19 @@ $UninstallList = @(
 	"Request Handler Agent"
 	"Skyline"
 	"Skype for Business"
+	"TeamViewer"
 	"TSPrint"
 	"TSPrint Client"
 	"TSScan"
 	"Xerox Desktop Print Experience"
-    "Xerox Print and Scan Experience"
+	"Xerox Print and Scan Experience"
 	
 ## Fresh Start (uninstall to reinstall specific executable version)
+	"7-Zip"
 	"Adobe"
 	"Chrome"
 	"Cisco"
+	"File Queue Uploader"
 	"Kaseya"
 	"Nextiva"
 	"Webroot SecureAnywhere"
@@ -141,28 +175,60 @@ $UninstallList = @(
 	"Panini"
 	"Ranger"
 	"Check Scanner"
+	"VLC"
 )
 
-$HPWolfList = @(
-# Required Separation due to HPWolf killing File Explorer and forcing restart. This list is completed AFTER the Installations. 
+# Required Separation due to HPWolf killing File Explorer and forcing restart. This list is completed AFTER the Installations.
+$HPWolfList = @( 
 	"HP Wolf Security"
 	"HP Wolf Security - Console"
-    "HP Security Update Service"
+	"HP Security Update Service"
 )
 
 # Define any custom uninstall argument overrides here
 $UseOriginalUninstallString = @(
-    "Firefox"
-    "Google Chrome"
-	"Kaseya Agent"
+	"Ecosystem agent"
+    "File Cache Service Agent"
+	"Kaseya"
+	"OneDrive"
+	"Patch Management Service Controller"
+	"Request Handler Agent"
+	"TSPrint"
+	"TSPrint Client"
+	"TSScan"
 )
 
 $UninstallCommandSuffixOverrides = @{
-    "Chrome" = "--force-uninstall"
-	"Kaseya" = "/s"
+    "Chrome" = "--uninstall --system-level --force-uninstall"
+	"Firefox" = "/S"
+	"PDFPro" = "/VERSILENT"
+	"Citrix Workspace" = "/silent uninstall"
 }
 
 ########## DO NOT EDIT BELOW THIS LINE ##########
+
+function Install-WindowsFeatures {
+	param (
+		[Parameter()]
+		[string[]]$FeatureList = @()
+	)
+
+    foreach ($feature in $FeatureList) {
+        $installed = Get-WindowsCapability -Online | Where-Object { $_.Name -eq $feature -and $_.State -eq "Installed" }
+        if ($installed) {
+            Write-Host "$($feature.Split('~')[0]) is already installed."
+        } else {
+            try {
+                Write-Host "Installing $($feature.Split('~')[0])..."
+                Add-WindowsCapability -Online -Name $feature -ErrorAction Stop
+                Write-Host "Successfully installed $($feature.Split('~')[0])."
+            } catch {
+                Write-Warning "Failed to install $($feature.Split('~')[0]): $_"
+            }
+        }
+    }
+}
+
 
 function Get-UninstallRegistryEntries {
     $registryPaths = @(
@@ -192,12 +258,15 @@ function Uninstall-Program {
 		[string[]]$UseOriginalUninstallString = @(),
 		
 		[Parameter()]
+		[string[]]$HPWolfList = @(),
+		
+		[Parameter()]
 		[hashtable]$UninstallCommandSuffixOverrides = @{}
     )
 
     $standardArgs = @{
         "msi"      = "/qn /norestart"
-        "exe"      = "/quiet /s /qn /norestart"
+        "exe"      = "/quiet /S /qn /norestart /allusers"
         "fallback" = "/quiet /norestart"
     }
 
@@ -227,6 +296,34 @@ function Uninstall-Program {
             }
 
             Write-Host "Found: $displayName"
+			
+			# === Attempt to stop related processes ===
+			try {
+				$procMatches = Get-Process | Where-Object { $_.Name -like "*$($programName)*" }
+				foreach ($proc in $procMatches) {
+					Write-Host "Stopping process: $($proc.Name)"
+					Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+				}
+			} catch {
+				Write-Warning "Failed to stop process for $displayName : $_"
+			}
+
+			# === Attempt to stop related services ===
+			try {
+				$svcMatches = Get-Service | Where-Object {
+					$_.Name -like "*$($programName)*" -or $_.DisplayName -like "*$($programName)*"
+				}
+
+				foreach ($svc in $svcMatches) {
+					if ($svc.Status -eq 'Running') {
+						Write-Host "Stopping service: $($svc.Name)"
+						Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue
+					}
+				}
+			} catch {
+				Write-Warning "Failed to stop services related to $displayName : $_"
+			}
+
             Write-Host "Original Uninstall Command: $uninstallCmd"
 
             # Check if we should use the original uninstall string
@@ -272,23 +369,29 @@ function Uninstall-Program {
                 $exeCandidate = ($uninstallCmd -split '\s+')[0].Trim('"')
                 $exeName = [System.IO.Path]::GetFileName($exeCandidate)
 
-                if ($exeName -ieq "msiexec.exe") {
-                    $productCode = if ($uninstallCmd -match '{.*}') {
-                        [regex]::Match($uninstallCmd, '{.*}').Value
-                    } else {
-                        $match.PSChildName
-                    }
+			if ($exeName -ieq "msiexec.exe") {
+				$productCode = ""
+				if ($uninstallCmd -match '{.*}') {
+					$productCode = [regex]::Match($uninstallCmd, '{.*}').Value
+				} else {
+					$productCode = $match.PSChildName
+				}
 
-                    $exePath = "msiexec.exe"
-                    if ($customArgs) {
-						$argTail = $customArgs
-					} else {
-						$argTail = $standardArgs['msi']
-					}
-                    $args = "/x $productCode $argTail"
-                    Write-Host "Start-Process -FilePath $exePath -ArgumentList '$args'"
-                    Start-Process -FilePath $exePath -ArgumentList $args -Wait -NoNewWindow
-                }
+				if ($customArgs) {
+					$argTail = $customArgs
+				} else {
+					$argTail = $standardArgs['msi']
+				}
+
+				# Combine full string to run as a cmd line
+				$fullCommand = "msiexec.exe /x $productCode $argTail"
+
+				Write-Host "Executing via cmd.exe: $fullCommand"
+				Start-Process -FilePath "cmd.exe" -ArgumentList "/c `"$fullCommand`"" -Wait -NoNewWindow
+				Start-Sleep -Seconds 2
+				continue
+			}
+                
                 elseif ($uninstallCmd -match '\.exe') {
                     $regexResult = [regex]::Match($uninstallCmd, '(^\"?.+?\.exe\")|(^\S+?\.exe)')
                     if ($regexResult.Success) {
@@ -355,6 +458,14 @@ function Uninstall-Program {
     }
 }
 
+$LogPath = "C:\kworking\onboarding-log_$env:COMPUTERNAME.txt"
+Start-Transcript -Path $LogPath -Append
+
+# Ensure the script is running with administrator privileges
+if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Host "This script must be run as Administrator!" -ForegroundColor Red
+    exit 1
+}
 
 ## Update Active Directory to Reflect Device Type and Unassigned Status
 
@@ -509,7 +620,12 @@ foreach ($Software in $SoftwareList) {
 
 Write-Output "Installation process completed."
 
-# **Step 3: Cleanup
+# **Step 3: Install Windows Features
+Write-Output "Starting Windows Feature Installation..."
+Install-WindowsFeatures -FeatureList $FeatureList
+Write-Output "Windows Feature Installation Complete."
+
+# **Step 4: Cleanup
 Write-Output "Starting Cleanup Processes..."
 
 ##	Delete SoftwareInstall Files
@@ -575,20 +691,17 @@ Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Confirm:$F
 If(-not(Get-InstalledModule PSWindowsUpdate -ErrorAction SilentlyContinue)){
 	Install-Module PSWindowsUpdate -Confirm:$False -Force
 }
-Get-WindowsUpdate -Install -AcceptAll -IgnoreReboot
-Add-WindowsCapability -Online -Name "SNMP.Client~~~~0.0.1.0"
-Add-WindowsCapability -Online -Name "WMI-SNMP-Provider.Client~~~~0.0.1.0"
 
 ## Schedule CHKDSK on C: for next reboot (full repair)
 Write-Host "Scheduling CHKDSK for C: on next reboot..." -ForegroundColor Yellow
 Start-Process -FilePath "fsutil.exe" -ArgumentList "dirty set C:" -Wait -NoNewWindow
 
 # **Step 4: Uninstall HPWolf Security (This FORCES a restart after finishing)**
-Write-Output "Starting uninstallation of specified programs..."
+Write-Output "Starting uninstallation of HPWolf Security programs..."
 foreach ($Program in $HPWolfList) {
     Uninstall-Program -ProgramName $Program
 }
-Write-Output "Uninstallation process completed."
+Write-Output "HPWolf Uninstallation process completed."
 
 Stop-Transcript
 
